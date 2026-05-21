@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/mainRootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:weightSum="2"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clipChildren="true"
+            android:clipToPadding="true">
+
+            <TextureView
+                android:id="@+id/textureViewLeft"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clipChildren="true"
+            android:clipToPadding="true">
+
+            <TextureView
+                android:id="@+id/textureViewRight"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <View
+        android:id="@+id/centerDivider"
+        android:layout_width="2dp"
+        android:layout_height="match_parent"
+        android:background="#40FFFFFF"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent" />
+
+    <androidx.cardview.widget.CardView
+        android:id="@+id/controlPanel"
+        android:layout_width="750dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="30dp"
+        app:cardBackgroundColor="#CC111625"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="10dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="18dp"
+            android:gravity="center_vertical"
+            android:weightSum="10">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="3"
+                android:orientation="vertical"
+                android:padding="4dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="화면 배율" android:textColor="#8A99AD" android:textSize="11sp" android:textStyle="bold"/>
+                <SeekBar android:id="@+id/sbZoom" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="200" android:progress="50" android:splitTrack="false" android:thumbTint="#00E5FF" android:progressTint="#00E5FF"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="3"
+                android:orientation="vertical"
+                android:padding="4dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="렌즈 왜곡률" android:textColor="#8A99AD" android:textSize="11sp" android:textStyle="bold"/>
+                <SeekBar android:id="@+id/sbDistortion" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" android:progress="0" android:splitTrack="false" android:thumbTint="#FF007F" android:progressTint="#FF007F"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="2"
+                android:orientation="vertical"
+                android:padding="4dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="중심 간격 (IPD)" android:textColor="#8A99AD" android:textSize="11sp" android:textStyle="bold"/>
+                <SeekBar android:id="@+id/sbIpd" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="60" android:progress="30" android:splitTrack="false" android:thumbTint="#FFFFFF" android:progressTint="#55FFFFFF"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="2"
+                android:gravity="center"
+                android:orientation="vertical">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="화면 방향" android:textColor="#8A99AD" android:textSize="11sp" android:textStyle="bold" android:layout_marginBottom="4dp"/>
+                <Button
+                    android:id="@+id/btnFlip"
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:layout_marginHorizontal="8dp"
+                    android:backgroundTint="#22314E"
+                    android:text="상하 반전"
+                    android:textColor="#00E5FF"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"/>
+            </LinearLayout>
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <TextView
+        android:id="@+id/tvHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:text="화면을 터치하면 조절 패널이 나타납니다"
+        android:textColor="#40FFFFFF"
+        android:textSize="11sp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"/>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

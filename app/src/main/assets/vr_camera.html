@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>VR 2분할 초광각 렌즈 조절 카메라</title>
+    <style>
+        * {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+          user-select: none;
+          -webkit-user-select: none;
+        }
+
+        html, body {
+        width: 100%;
+        height: 100%;
+         overflow: hidden;
+        background: transparent !important; /* 🌟 검은 배경(#000) 대신 투명으로 교체하여 1층 카메라가 보이게 합니다 */
+        color: #fff;
+        }
+
+        /* WebGL 기반 고성능 화면 렌더러 */
+        canvas {
+          display: none !important; /* WebGL 캔버스는 끄고 순정 카메라 화면을 봅니다 */
+        }
+
+        /* 입력용 실시간 카메라 (화면 표시 방지) */
+        #hiddenVideo {
+          display: none;
+        }
+
+        /* VR 기기 렌즈 중심용 중앙 경계 기준선 */
+        #centerDivider {
+          position: absolute;
+          left: 50%;
+          top: 0;
+          width: 2px;
+          height: 100%;
+          background: rgba(255, 255, 255, 0.25);
+          z-index: 3;
+          pointer-events: none;
+        }
+
+        /* 상단 조작 헤더 */
+        #headerMenu {
+          position: absolute;
+          top: 15px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 10;
+          display: flex;
+          gap: 12px;
+          width: 90%;
+          max-width: 500px;
+          pointer-events: none;
+          justify-content: center;
+        }
+
+        button {
+          pointer-events: auto;
+          padding: 12px 20px;
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          border-radius: 30px;
+          color: white;
+          font-size: 14px;
+          font-weight: bold;
+          background: rgba(15, 15, 15, 0.75);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          cursor: pointer;
+          box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+          transition: all 0.2s;
+        }
+
+        button:active {
+          transform: scale(0.95);
+          background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* 하단 정밀 설정 대시보드 */
+        #dashboard {
+          position: absolute;
+          bottom: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 10;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          width: 90%;
+          max-width: 460px;
+          pointer-events: none;
+        }
+
+        .panel {
+          pointer-events: auto;
+          background: rgba(10, 10, 10, 0.8);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 24px;
+          padding: 15px 20px;
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        }
+
+        .slider-group {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          justify-content: space-between;
+        }
+
+        .slider-group label {
+          font-size: 12px;
+          font-weight: bold;
+          color: #ccc;
+          width: 90px;
+          white-space: nowrap;
+        }
+
+        .slider-group input[type="range"] {
+          flex: 1;
+          height: 6px;
+          -webkit-appearance: none;
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 3px;
+          outline: none;
+        }
+
+        .slider-group input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          background: #00e5ff;
+          cursor: pointer;
+          box-shadow: 0 0 8px rgba(0, 229, 255, 0.5);
+        }
+
+        .val-display {
+          width: 45px;
+          font-size: 12px;
+          text-align: right;
+          font-family: monospace;
+          color: #00e5ff;
+        }
+
+        #infoMessage {
+          font-size: 11px;
+          text-align: center;
+          opacity: 0.7;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        /* 권한 요청 안내/에러 레이어 */
+        #alertOverlay {
+          display: none;
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.9);
+          z-index: 100;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .alert-box {
+          background: #111;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 20px;
+          padding: 25px;
+          max-width: 340px;
+          width: 85%;
+          text-align: center;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+        }
+
+        .alert-box h2 {
+          font-size: 18px;
+          color: #00e5ff;
+          margin-bottom: 12px;
+        }
+
+        .alert-box p {
+          font-size: 13px;
+          line-height: 1.6;
+          color: #ccc;
+          margin-bottom: 20px;
+        }
+
+        .alert-box button {
+          width: 100%;
+          background: #00e5ff;
+          color: #000;
+          border: none;
+        }
+    </style>
+    <!-- WebGL 가속 처리를 위한 Three.js 엔진 탑재 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+<!-- 카메라 영상을 캡처할 보이지 않는 비디오 소스 -->
+<video id="hiddenVideo" autoplay playsinline muted></video>
+
+<!-- 가속 렌더링 캔버스 -->
+<canvas id="glCanvas"></canvas>
+<div id="centerDivider"></div>
+
+<!-- 컨트롤부 -->
+<div id="headerMenu">
+    <button id="cameraBtn">카메라 켜기</button>
+    <button id="fullscreenBtn">전체화면</button>
+</div>
+
+<div id="dashboard">
+    <div class="panel">
+        <!-- 1. 렌즈 크기 / 시야 배율 조절 -->
+        <div class="slider-group">
+            <label for="zoomSlider">렌즈 맞춤 배율</label>
+            <input type="range" id="zoomSlider" min="0.2" max="2.0" step="0.01" value="0.80">
+            <span class="val-display" id="zoomVal">0.80</span>
+        </div>
+
+        <!-- 2. 배럴 왜곡 강도 조절 -->
+        <div class="slider-group">
+            <label for="distSlider">렌즈 왜곡률</label>
+            <input type="range" id="distSlider" min="0.0" max="0.6" step="0.01" value="0.15">
+            <span class="val-display" id="distVal">0.15</span>
+        </div>
+
+        <!-- 3. 좌우 렌즈 초점 간격(IPD) 보정 -->
+        <div class="slider-group">
+            <label for="ipdSlider">렌즈 중심 간격</label>
+            <input type="range" id="ipdSlider" min="-0.3" max="0.3" step="0.01" value="0.00">
+            <span class="val-display" id="ipdVal">0.00</span>
+        </div>
+    </div>
+    <div id="infoMessage">스마트폰을 가로로 회전하여 전체화면을 켜세요.</div>
+</div>
+
+<!-- 사용자 브라우저 에러 대응 경고 모달 -->
+<div id="alertOverlay" style="display: none;">
+    <div class="alert-box">
+        <h2>카메라 액세스 안내</h2>
+        <p id="alertText">VR 카메라를 사용하려면 주소창에서 카메라 작동을 허용해 주셔야 합니다.</p>
+        <button id="alertCloseBtn">창 닫기</button>
+    </div>
+</div>
+
+<script>
+    let videoStream = null;
+    let videoTexture = null;
+    let scene, camera, renderer, material;
+    let rawWidth = 1920;
+    let rawHeight = 1080;
+
+    const cameraBtn = document.getElementById("cameraBtn");
+    const fullscreenBtn = document.getElementById("fullscreenBtn");
+    const hiddenVideo = document.getElementById("hiddenVideo");
+    const infoMessage = document.getElementById("infoMessage");
+    const alertOverlay = document.getElementById("alertOverlay");
+    const alertText = document.getElementById("alertText");
+    const alertCloseBtn = document.getElementById("alertCloseBtn");
+
+    // 조절 슬라이더 요소
+    const zoomSlider = document.getElementById("zoomSlider");
+    const zoomVal = document.getElementById("zoomVal");
+    const distSlider = document.getElementById("distSlider");
+    const distVal = document.getElementById("distVal");
+    const ipdSlider = document.getElementById("ipdSlider");
+    const ipdVal = document.getElementById("ipdVal");
+
+    // 초기 WebGL 설정
+    function setupWebGL() {
+      const canvas = document.getElementById("glCanvas");
+
+      scene = new THREE.Scene();
+      camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, powerPreference: "high-performance" });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      // 임시로 검은색 1x1 텍스처 삽입
+      const initBlackTex = new THREE.DataTexture(new Uint8Array([0,0,0,255]), 1, 1, THREE.RGBAFormat);
+      initBlackTex.needsUpdate = true;
+
+      // 정점 데이터 전송 셰이더
+      const vertexShaderCode = `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position, 1.0);
+        }
+      `;
+
+      // 가로/세로 잘림(크롭)이 전혀 없이 모바일 렌더러에 매핑한 뒤,
+      // 상하 반전 및 VR 물리 배럴 왜곡을 실시간으로 연산하는 픽셀 셰이더
+      const fragmentShaderCode = `
+        uniform sampler2D uCameraTex;
+        uniform float uDistortion; // 배럴 왜곡률
+        uniform float uZoomScale;   // 렌즈 물리 맞춤 비율
+        uniform float uIPDOffset;   // 좌우 눈 초점 거리 보정값 (IPD)
+        uniform vec2 uAspectCorrection; // 화면 찌그러짐 보정비율
+        varying vec2 vUv;
+
+        void main() {
+          bool isRightEye = vUv.x > 0.5;
+
+          // 각 안구 렌즈 공간의 중심점 구하기 (-1.0 ~ 1.0 체계)
+          vec2 eyeUV;
+          if (!isRightEye) {
+            // 왼쪽 렌즈 중심 보정 및 유저 조절 중심축 반영
+            eyeUV = vec2((vUv.x * 2.0) - 0.5 + uIPDOffset, (vUv.y - 0.5) * 2.0);
+          } else {
+            // 오른쪽 렌즈 중심 보정 및 유저 조절 중심축 반영
+            eyeUV = vec2(((vUv.x - 0.5) * 2.0) - 0.5 - uIPDOffset, (vUv.y - 0.5) * 2.0);
+          }
+
+          // 물리 배럴 왜곡 공식 연산
+          float r2 = eyeUV.x * eyeUV.x + eyeUV.y * eyeUV.y;
+          float distortFactor = 1.0 + uDistortion * r2 + uDistortion * r2 * r2;
+
+          // 최종 연산 영역
+          vec2 calculatedUV = eyeUV * distortFactor;
+
+          // 찌그러짐 및 화면 잘림(광각 유지)을 원천 보정
+          calculatedUV.x *= uAspectCorrection.x * uZoomScale;
+          calculatedUV.y *= uAspectCorrection.y * uZoomScale;
+
+          // 텍스처 추출을 위한 [0, 1] 일반 좌표계 변환
+          vec2 texCoord;
+          if (!isRightEye) {
+            texCoord = vec2((calculatedUV.x + 0.5) * 0.5, (calculatedUV.y * 0.5) + 0.5);
+          } else {
+            texCoord = vec2(((calculatedUV.x + 0.5) * 0.5) + 0.5, (calculatedUV.y * 0.5) + 0.5);
+          }
+
+          // 동그란 원형 렌즈 마스크 외부 블랙아웃 처리
+          if (calculatedUV.x < -0.5 || calculatedUV.x > 0.5 || calculatedUV.y < -0.5 || calculatedUV.y > 0.5) {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+          } else {
+            // 요구사항: 후면 카메라 원본을 상하 반전 후 VR 좌우 2분할 렌즈 매핑 적용
+            vec2 flippedCoord = vec2(texCoord.x, 1.0 - texCoord.y);
+            gl_FragColor = texture2D(uCameraTex, flippedCoord);
+          }
+        }
+      `;
+
+      material = new THREE.ShaderMaterial({
+        uniforms: {
+          uCameraTex: { value: initBlackTex },
+          uDistortion: { value: parseFloat(distSlider.value) },
+          uZoomScale: { value: parseFloat(zoomSlider.value) },
+          uIPDOffset: { value: parseFloat(ipdSlider.value) },
+          uAspectCorrection: { value: new THREE.Vector2(1.0, 1.0) }
+        },
+        vertexShader: vertexShaderCode,
+        fragmentShader: fragmentShaderCode,
+        depthTest: false,
+        depthWrite: false
+      });
+
+      const geometry = new THREE.PlaneGeometry(2, 2);
+      const mesh = new THREE.Mesh(geometry, material);
+      scene.add(mesh);
+
+      renderLoop();
+    }
+
+    // 부드러운 애니메이션 루프 실행
+    function renderLoop() {
+      requestAnimationFrame(renderLoop);
+      if (videoTexture && hiddenVideo.readyState >= hiddenVideo.HAVE_CURRENT_DATA) {
+        videoTexture.needsUpdate = true;
+      }
+      renderer.render(scene, camera);
+    }
+
+    // 모바일 기기의 카메라 디바이스 목록 중 가장 화각이 넓은 카메라(초광각 렌즈)를 탐색하여 시작합니다.
+    // vr_camera.html 내부의 기존 activateCamera 함수를 이 버전으로 교체하세요.
+    async function activateCamera() {
+      try {
+        if (videoStream) {
+          videoStream.getTracks().forEach(track => track.stop());
+        }
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        let selectedDeviceId = null;
+
+        const ultraWideCamera = videoDevices.find(device =>
+          device.label.toLowerCase().includes('ultra') ||
+          device.label.toLowerCase().includes('wide') ||
+          device.label.toLowerCase().includes('0') ||
+          device.label.toLowerCase().includes('zoom')
+        );
+
+        if (ultraWideCamera) {
+          selectedDeviceId = ultraWideCamera.deviceId;
+        } else if (videoDevices.length > 1) {
+          selectedDeviceId = videoDevices[videoDevices.length - 1].deviceId;
+        }
+
+        const constraints = {
+          video: {
+            deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+            facingMode: selectedDeviceId ? undefined : { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        };
+
+        videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+        hiddenVideo.srcObject = videoStream;
+
+        // 🌟 [핵심 수정] 안드로이드 웹뷰가 비디오 스트림을 놓치지 않도록 속성 강제 주입
+        hiddenVideo.setAttribute("playsinline", true);
+        hiddenVideo.setAttribute("muted", true);
+        hiddenVideo.muted = true;
+
+        hiddenVideo.onloadedmetadata = () => {
+          // 🌟 안드로이드 웹뷰 전용 하드웨어 가속 락 해제 치트키
+          setTimeout(() => {
+            hiddenVideo.play().then(() => {
+              rawWidth = hiddenVideo.videoWidth || 1920;
+              rawHeight = hiddenVideo.videoHeight || 1080;
+
+              // 비디오 텍스처 설정 및 왜곡 가속
+              videoTexture = new THREE.VideoTexture(hiddenVideo);
+              videoTexture.minFilter = THREE.LinearFilter;
+              videoTexture.magFilter = THREE.LinearFilter;
+
+              material.uniforms.uCameraTex.value = videoTexture;
+              infoMessage.innerText = "초광각(Ultra-wide) 카메라 가속 렌더링 시작";
+
+              recalcAspect();
+            }).catch(e => {
+              console.error("비디오 재생 강제 실패 인터셉트:", e);
+              // 혹시 모를 정책 차단 시 터치로 재구동 유도
+              hiddenVideo.play();
+            });
+          }, 100); // 0.1초의 버퍼를 주어 웹뷰가 비디오 메모리를 완전히 할당하도록 유도합니다.
+        };
+
+      } catch (err) {
+        console.warn("전용 광각 카메라 탐색 실패, 일반 후면 카메라로 대체 작동합니다.", err);
+
+        try {
+          videoStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          });
+
+          hiddenVideo.srcObject = videoStream;
+          hiddenVideo.setAttribute("playsinline", true);
+          hiddenVideo.setAttribute("muted", true);
+          hiddenVideo.muted = true;
+
+          hiddenVideo.onloadedmetadata = () => {
+            setTimeout(() => {
+              hiddenVideo.play().then(() => {
+                rawWidth = hiddenVideo.videoWidth || 1920;
+                rawHeight = hiddenVideo.videoHeight || 1080;
+                videoTexture = new THREE.VideoTexture(hiddenVideo);
+                material.uniforms.uCameraTex.value = videoTexture;
+                infoMessage.innerText = "표준 광각 카메라 가속 렌더링 시작";
+                recalcAspect();
+              });
+            }, 100);
+          };
+        } catch (fallbackErr) {
+          showAlert("카메라 하드웨어 바인딩 에러가 발생했습니다.");
+        }
+      }
+    }
+
+    // 화면 찌그러짐을 보정하는 Contain 기반 비율 공식
+    function recalcAspect() {
+      if (!material) return;
+
+      const singleWidth = window.innerWidth / 2;
+      const singleHeight = window.innerHeight;
+
+      const currentCanvasRatio = singleWidth / singleHeight;
+      const cameraFrameRatio = (rawWidth / 2) / rawHeight;
+
+      let factorX = 1.0;
+      let factorY = 1.0;
+
+      // 상하 또는 좌우 영역이 억지로 잘려나가지 않고 100% 보이게 보정
+      if (currentCanvasRatio > cameraFrameRatio) {
+        factorX = currentCanvasRatio / cameraFrameRatio;
+        factorY = 1.0;
+      } else {
+        factorX = 1.0;
+        factorY = cameraFrameRatio / currentCanvasRatio;
+      }
+
+      material.uniforms.uAspectCorrection.value.set(factorX, factorY);
+    }
+
+    // 전체화면 처리
+    function requestDeviceFullscreen() {
+      const rootDoc = document.documentElement;
+
+      try {
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+          if (rootDoc.requestFullscreen) {
+            rootDoc.requestFullscreen();
+          } else if (rootDoc.webkitRequestFullscreen) {
+            rootDoc.webkitRequestFullscreen();
+          } else if (rootDoc.mozRequestFullScreen) {
+            rootDoc.mozRequestFullScreen();
+          } else if (rootDoc.msRequestFullscreen) {
+            rootDoc.msRequestFullscreen();
+          }
+        } else {
+          if (document.exitFullscreen) {
+            document.exitFullscreen();
+          } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+          }
+        }
+      } catch (e) {
+        console.warn("Fullscreen api failed: ", e);
+        infoMessage.innerText = "전체화면을 지원하지 않는 환경입니다.";
+      }
+    }
+
+    function showAlert(text) {
+      alertText.innerHTML = text;
+      alertOverlay.style.display = "flex";
+    }
+
+    alertCloseBtn.addEventListener("click", () => {
+      alertOverlay.style.display = "none";
+    });
+
+    cameraBtn.addEventListener("click", activateCamera);
+    fullscreenBtn.addEventListener("click", requestDeviceFullscreen);
+
+    zoomSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      zoomVal.innerText = val.toFixed(2);
+
+      // 🌟 안드로이드 네이티브 코틀린으로 값 실시간 전송!
+      if (window.AndroidVR) {
+        window.AndroidVR.onZoomChanged(val);
+      }
+    });
+
+    distSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      distVal.innerText = val.toFixed(2);
+
+      // 🌟 안드로이드 네이티브 코틀린으로 값 실시간 전송!
+      if (window.AndroidVR) {
+        window.AndroidVR.onDistortionChanged(val);
+      }
+    });
+
+    ipdSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      ipdVal.innerText = val.toFixed(2);
+
+      // 🌟 안드로이드 네이티브 코틀린으로 값 실시간 전송!
+      if (window.AndroidVR) {
+        window.AndroidVR.onIpdChanged(val);
+      }
+    });
+    // 화면 리사이즈/회전 시 갱신
+    function onLayoutChange() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      if (renderer) {
+        renderer.setSize(w, h);
+      }
+
+      recalcAspect();
+
+      if (h > w) {
+        infoMessage.innerText = "스마트폰을 가로로 돌리면 VR 2분할 모드가 정렬됩니다.";
+      } else {
+        infoMessage.innerText = "VR 비율 가로 정렬 상태";
+      }
+    }
+
+    window.addEventListener("resize", onLayoutChange);
+    window.addEventListener("orientationchange", onLayoutChange);
+
+    window.onload = () => {
+      setupWebGL();
+      onLayoutChange();
+    };
+</script>
+</body>
+</html>
