@@ -10,48 +10,146 @@ import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
-class VRGLRenderer(private val onSurfaceCreatedCallback: (SurfaceTexture) -> Unit) : GLSurfaceView.Renderer {
+class VRGLRenderer(private val onSurfaceTextureCreated: (SurfaceTexture) -> Unit) : GLSurfaceView.Renderer {
 
-    private var textureId = 0
-    private var surfaceTexture: SurfaceTexture? = null
-    private var program = 0
+    private var mTextureId = -1
+    private var mSurfaceTexture: SurfaceTexture? = null
+    private var mUpdateSurface = false
 
-    // 실시간 제어 파라미터 (uZoomScale은 하드웨어 줌을 사용하므로 1.0f로 고정)
-    var distortion = 0.15f
-    var zoomScale = 1.0f
-    var ipdOffset = 0.00f
-    var isFlipped = 0
+    @Volatile var distortion: Float = 0.22f
+    @Volatile var ipdOffset: Float = 0.0f
+    @Volatile var isFlipped: Int = 0
 
+    private var mProgram = 0
+    private var mPositionHandle = 0
+    private var mTextureCoordinateHandle = 0
+    private var mDistortionHandle = 0
+    private var mIPDOffsetHandle = 0
+    private var mIsFlippedHandle = 0
+    private var mTexMatrixHandle = 0
+
+    private lateinit var vertexBuffer: FloatBuffer
+    private lateinit var textureBuffer: FloatBuffer
+
+    // 🌟 CameraX의 90도 회전값을 온전히 흡수할 매트릭스 배열
     private val mSTMatrix = FloatArray(16)
-    private val vertexBuffer: FloatBuffer = ByteBuffer.allocateDirect(VERTEX_DATA.size * 4)
-        .order(ByteOrder.nativeOrder()).asFloatBuffer().put(VERTEX_DATA)
 
-    init { vertexBuffer.position(0) }
+    // 기본 정점 (화면 전체 레이아웃)
+    private val vertices = floatArrayOf(
+        -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f,  1.0f
+    )
+
+    // 🌟 CameraX 표준 외부 텍스처 매핑 좌표 (0과 1의 기본 스탠다드 형태)
+    private val textureCoordinates = floatArrayOf(
+        0.0f, 1.0f,  0.0f, 0.0f,  1.0f, 1.0f,  1.0f, 0.0f
+    )
+
+    // 🌟 [회전 해결 핵심 1] 버텍스 셰이더에서 변환 행렬을 정확히 곱해 90도를 바로잡습니다.
+    private val vertexShaderCode = """
+        attribute vec4 position;
+        attribute vec4 inputTextureCoordinate;
+        varying vec2 vTextureCoord;
+        uniform mat4 uTexMatrix;
+        void main() {
+            gl_Position = position;
+            // 하드웨어 센서 회전(90도) 매트릭스를 텍스처 좌표에 적용
+            vTextureCoord = (uTexMatrix * inputTextureCoordinate).xy;
+        }
+    """.trimIndent()
+
+    // 🌟 [회전 해결 핵심 2] 프래그먼트 셰이더
+    private val fragmentShaderCode = """
+        #extension GL_OES_EGL_image_external : require
+        precision mediump float;
+        varying vec2 vTextureCoord;
+        uniform samplerExternalOES sTexture;
+        
+        uniform float uDistortion;
+        uniform float uIPDOffset;
+        uniform float uIsFlipped;
+
+        void main() {
+            vec2 uv = vTextureCoord;
+
+            // 1. 상하반전 제어
+            if (uIsFlipped == 1.0) {
+                uv.y = 1.0 - uv.y;
+            }
+
+            // 2. [가장 중요] 좌우 어느 쪽 눈이든 '완전히 동일한 원본 좌표(0.0 ~ 1.0)'를 바라보도록 축 분리
+            bool isRightEye = uv.x > 0.5;
+            vec2 st;
+
+            if (!isRightEye) {
+                // 왼쪽 구역(0.0~0.5)을 원본의 0.0~1.0 영역으로 맵핑
+                st = vec2(uv.x * 2.0, uv.y);
+            } else {
+                // 오른쪽 구역(0.5~1.0)도 원본의 완전히 동일한 0.0~1.0 영역으로 복제 매핑
+                st = vec2((uv.x - 0.5) * 2.0, uv.y);
+            }
+
+            // 3. 양안 간격(IPD) 미세 조정을 중앙 기준점 변경으로 안전하게 처리
+            if (!isRightEye) {
+                st.x += uIPDOffset;
+            } else {
+                st.x -= uIPDOffset;
+            }
+
+            // 4. 배럴 왜곡을 적용하기 위해 왜곡 중심점을 각 눈의 정중앙(0.5, 0.5)으로 고정
+            st -= 0.5;
+            float r2 = st.x * st.x + st.y * st.y;
+            vec2 distortedST = st * (1.0 + uDistortion * r2 + uDistortion * r2 * r2);
+            distortedST += 0.5; // 왜곡 후 다시 표준 좌표계로 복원
+
+            // 5. 시야 확보 및 외곽 암막 안전장치
+            if (distortedST.x < 0.0 || distortedST.x > 1.0 || distortedST.y < 0.0 || distortedST.y > 1.0) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); // 렌즈 범위를 벗어나면 깔끔하게 암막 처리
+            } else {
+                gl_FragColor = texture2D(sTexture, distortedST); // 완벽하게 일치하는 좌우 화면 출력
+            }
+        }
+    """.trimIndent()
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
 
-        val textures = IntArray(1)
-        GLES20.glGenTextures(1, textures, 0)
-        textureId = textures[0]
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
+        vertexBuffer = ByteBuffer.allocateDirect(vertices.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(vertices)
+        vertexBuffer.position(0)
+        textureBuffer = ByteBuffer.allocateDirect(textureCoordinates.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(textureCoordinates)
+        textureBuffer.position(0)
 
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode)
+        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentShaderCode)
 
-        surfaceTexture = SurfaceTexture(textureId)
-        onSurfaceCreatedCallback(surfaceTexture!!)
-
-        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER_CODE)
-        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER_CODE)
-
-        program = GLES20.glCreateProgram().apply {
+        mProgram = GLES20.glCreateProgram().apply {
             GLES20.glAttachShader(this, vertexShader)
             GLES20.glAttachShader(this, fragmentShader)
             GLES20.glLinkProgram(this)
         }
+
+        mPositionHandle = GLES20.glGetAttribLocation(mProgram, "position")
+        mTextureCoordinateHandle = GLES20.glGetAttribLocation(mProgram, "inputTextureCoordinate")
+        mDistortionHandle = GLES20.glGetUniformLocation(mProgram, "uDistortion")
+        mIPDOffsetHandle = GLES20.glGetUniformLocation(mProgram, "uIPDOffset")
+        mIsFlippedHandle = GLES20.glGetUniformLocation(mProgram, "uIsFlipped")
+        mTexMatrixHandle = GLES20.glGetUniformLocation(mProgram, "uTexMatrix")
+
+        val textures = IntArray(1)
+        GLES20.glGenTextures(1, textures, 0)
+        mTextureId = textures[0]
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, mTextureId)
+        GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR.toFloat())
+        GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR.toFloat())
+
+        mSurfaceTexture = SurfaceTexture(mTextureId).apply {
+            setOnFrameAvailableListener {
+                synchronized(this@VRGLRenderer) {
+                    mUpdateSurface = true
+                }
+            }
+        }
+
+        mSurfaceTexture?.let { onSurfaceTextureCreated(it) }
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -61,109 +159,40 @@ class VRGLRenderer(private val onSurfaceCreatedCallback: (SurfaceTexture) -> Uni
     override fun onDrawFrame(gl: GL10?) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
 
-        surfaceTexture?.apply {
-            updateTexImage()
-            getTransformMatrix(mSTMatrix)
+        synchronized(this) {
+            if (mUpdateSurface) {
+                mSurfaceTexture?.updateTexImage()
+                // 🌟 [가장 중요] CameraX 가 준 90도 회전용 행렬 정보를 매 프레임 실시간으로 빼옵니다.
+                mSurfaceTexture?.getTransformMatrix(mSTMatrix)
+                mUpdateSurface = false
+            }
         }
 
-        GLES20.glUseProgram(program)
+        GLES20.glUseProgram(mProgram)
 
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uTexMatrix"), 1, false, mSTMatrix, 0)
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uDistortion"), distortion)
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uZoomScale"), zoomScale)
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uIPDOffset"), ipdOffset)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uIsFlipped"), isFlipped)
+        // 🌟 매트릭스를 연동 핸들에 바인딩하여 버텍스 셰이더로 토스합니다.
+        GLES20.glUniformMatrix4fv(mTexMatrixHandle, 1, false, mSTMatrix, 0)
 
-        val ph = GLES20.glGetAttribLocation(program, "aPosition")
-        GLES20.glEnableVertexAttribArray(ph)
-        vertexBuffer.position(0)
-        GLES20.glVertexAttribPointer(ph, 2, GLES20.GL_FLOAT, false, 16, vertexBuffer)
+        GLES20.glUniform1f(mDistortionHandle, distortion)
+        GLES20.glUniform1f(mIPDOffsetHandle, ipdOffset)
+        GLES20.glUniform1f(mIsFlippedHandle, isFlipped.toFloat())
 
-        val th = GLES20.glGetAttribLocation(program, "aTextureCoord")
-        GLES20.glEnableVertexAttribArray(th)
-        vertexBuffer.position(2)
-        GLES20.glVertexAttribPointer(th, 2, GLES20.GL_FLOAT, false, 16, vertexBuffer)
+        GLES20.glEnableVertexAttribArray(mPositionHandle)
+        GLES20.glVertexAttribPointer(mPositionHandle, 2, GLES20.GL_FLOAT, false, 8, vertexBuffer)
+
+        GLES20.glEnableVertexAttribArray(mTextureCoordinateHandle)
+        GLES20.glVertexAttribPointer(mTextureCoordinateHandle, 2, GLES20.GL_FLOAT, false, 8, textureBuffer)
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+
+        GLES20.glDisableVertexAttribArray(mPositionHandle)
+        GLES20.glDisableVertexAttribArray(mTextureCoordinateHandle)
     }
 
     private fun loadShader(type: Int, shaderCode: String): Int {
-        val shader = GLES20.glCreateShader(type)
-        GLES20.glShaderSource(shader, shaderCode)
-        GLES20.glCompileShader(shader)
-        return shader
-    }
-
-    companion object {
-        // 기본 90도 회전 배치를 유지하는 하드웨어 정점 데이터
-        private val VERTEX_DATA = floatArrayOf(
-            // X,     Y,     U,     V
-            -1.0f,  1.0f,  1.0f,  0.0f,
-            -1.0f, -1.0f,  0.0f,  0.0f,
-            1.0f,  1.0f,  1.0f,  1.0f,
-            1.0f, -1.0f,  0.0f,  1.0f
-        )
-
-        private const val VERTEX_SHADER_CODE = """
-            uniform mat4 uTexMatrix;
-            attribute vec4 aPosition;
-            attribute vec4 aTextureCoord;
-            varying vec2 vTextureCoord;
-            void main() {
-                gl_Position = aPosition;
-                vTextureCoord = (uTexMatrix * aTextureCoord).xy;
-            }
-        """
-
-        // 🌟 [보정 완료] 프래그먼트 셰이더 초입에서 X축을 강제로 반전시켜 좌우 반전 문제를 완벽히 해결했습니다.
-        private const val FRAGMENT_SHADER_CODE = """#extension GL_OES_EGL_image_external : require
-            precision mediump float;
-            varying vec2 vTextureCoord;
-            uniform samplerExternalOES sTexture;
-            
-            uniform float uDistortion; 
-            uniform float uZoomScale;   
-            uniform float uIPDOffset;   
-            uniform int uIsFlipped; 
-
-            void main() {
-                vec2 readyCoord = vTextureCoord;
-                
-                // 🌟 [좌우 반전 원천 제거] 픽셀을 거울 모드가 아닌 실제 정방향 시야로 뒤집습니다.
-                readyCoord.x = 1.0 - readyCoord.x;
-
-                // 버튼 누를 시 상하반전 처리
-                if (uIsFlipped == 1) {
-                    readyCoord.y = 1.0 - readyCoord.y;
-                }
-
-                bool isRightEye = readyCoord.x > 0.5;
-                vec2 uv;
-                
-                if (!isRightEye) {
-                    uv = vec2((readyCoord.x * 2.0) - 0.5 + uIPDOffset, (readyCoord.y - 0.5));
-                } else {
-                    uv = vec2(((readyCoord.x - 0.5) * 2.0) - 0.5 - uIPDOffset, (readyCoord.y - 0.5));
-                }
-
-                float r2 = uv.x * uv.x + uv.y * uv.y;
-                vec2 distortedUV = uv * (1.0 + uDistortion * r2 + uDistortion * r2 * r2);
-
-                distortedUV *= uZoomScale;
-                distortedUV += 0.5;
-
-                if (distortedUV.x < 0.0 || distortedUV.x > 1.0 || distortedUV.y < 0.0 || distortedUV.y > 1.0) {
-                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-                } else {
-                    vec2 finalTexCoord;
-                    if (!isRightEye) {
-                        finalTexCoord = vec2(distortedUV.x * 0.5, distortedUV.y);
-                    } else {
-                        finalTexCoord = vec2((distortedUV.x * 0.5) + 0.5, distortedUV.y);
-                    }
-                    gl_FragColor = texture2D(sTexture, finalTexCoord);
-                }
-            }
-        """
+        return GLES20.glCreateShader(type).apply {
+            GLES20.glShaderSource(this, shaderCode)
+            GLES20.glCompileShader(this)
+        }
     }
 }
